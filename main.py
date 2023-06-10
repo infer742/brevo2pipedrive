@@ -252,7 +252,7 @@ if "df" in st.session_state.keys():
         st.download_button(
             label="Download data as CSV",
             data=csv,
-            file_name='combined.csv',
+            file_name='export.csv',
             mime='text/csv',
         )
     
