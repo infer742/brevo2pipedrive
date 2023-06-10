@@ -185,8 +185,15 @@ campaigns = get_campaigns(configuration,
                           configuration.api_key)
 campaigns["groups"] = [0 for _ in range(len(campaigns))]
 # builds a gridOptions dictionary using a GridOptionsBuilder instance.
+
+campaign_groups = tuple(i for i in range(len(campaigns)))
 builder = GridOptionsBuilder.from_dataframe(campaigns)
 builder.configure_selection(selection_mode="multiple", use_checkbox=True)
+builder.configure_column(field="groups", editable=True, groupable=True, cellEditor='agRichSelectCellEditor',
+        cellEditorPopup=True,
+        cellEditorParams={
+            'values': campaign_groups
+            })
 go = builder.build()
 
 # uses the gridOptions dictionary to configure AgGrid behavior.
