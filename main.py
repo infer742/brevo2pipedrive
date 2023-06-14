@@ -9,6 +9,8 @@ import os
 import json
 import requests
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode
+import xlsxwriter
+from io import BytesIO
 
 load_dotenv()
 
@@ -93,6 +95,62 @@ def convert_df(df):
     # IMPORTANT: cache_data the conversion to prevent computation on every rerun
     return df.to_csv().encode('utf-8')
 
+@st.cache_data(persist=True)
+def convert_to_excel(df):
+    # keep file in memory
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine='xlsxwriter')
+    #
+    df.to_excel(writer, index=False, sheet_name='report', startrow=2)
+
+    workbook = writer.book
+    worksheet = writer.sheets['report']
+    #Now we have the worksheet object. We can manipulate it 
+    worksheet.set_zoom(90)
+    header_format = workbook.add_format({
+            "valign": "vcenter",
+            "align": "center",
+            "bg_color": "#951F06",
+            "bold": True,
+            'font_color': '#FFFFFF',
+            'border' : 1, 
+            'border_color': ''#D3D3D3'
+        })
+    #add title
+    title = "Auswertung der letzten Kampagnen"
+    #merge cells
+    format = workbook.add_format()
+    format.set_font_size(20)
+    format.set_font_color("#333333")
+    #
+    subheader = "Kampagnen"
+    worksheet.merge_range('A1:AS1', title, format)
+    worksheet.merge_range('A2:AS2', subheader)
+    worksheet.set_row(2, 30) 
+    worksheet.set_column(0,7,15)
+    worksheet.set_column(1,1,40)
+    # puting it all together
+    # Write the column headers with the defined format.
+    for col_num, value in enumerate(df.columns.values):
+        worksheet.write(2, col_num, value, header_format)
+        
+    writer.close()
+
+    # return excel file as binary string    
+    return output.getvalue()
+
+
+### TODO: Gesamt geht nicht, fehlende Spalten initialisieren
+@st.cache_data()
+def get_report(df):
+    df_grouped = df.groupby(["Campaign ID", "Campaign Name"]).value_counts(subset=["Status letzte Mailkampagne"], normalize=False).reset_index()
+    status_df = df_grouped.pivot(columns="Status letzte Mailkampagne", index=["Campaign ID", "Campaign Name"], values=0)
+    status_df.fillna(0, inplace=True)
+    status_df = status_df[["Keine Reaktion", "Mail geöffnet", "Mail Links angeklickt", "Softbounce", "Hardbounce"]]
+    status_df["Gesamt"] = status_df.apply(lambda x: len(df[df['Campaign ID'] == x.name]), axis=1)
+    status_df.reset_index(inplace=True)
+    
+    return status_df
 
 @st.cache_data()
 def get_campaigns(_configuration, key):
@@ -246,7 +304,11 @@ if "df" in st.session_state.keys():
 
     edited_result_df = st.data_editor(st.session_state['df'])
 
+    #convert to csv
     csv = convert_df(st.session_state['df'])
+    # get report and export to excel
+    report_df = get_report(edited_result_df)
+    excel_report = convert_to_excel(report_df)
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
@@ -256,4 +318,11 @@ if "df" in st.session_state.keys():
             mime='text/csv',
         )
     
+    with col2:
+        st.download_button(
+            label="Download excel report",
+            data=excel_report,
+            file_name='report.xlsx',
+            mime="application/vnd.ms-excel",
+        )
     
