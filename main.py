@@ -11,6 +11,7 @@ import requests
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode
 import xlsxwriter
 from io import BytesIO
+import numpy as np
 
 load_dotenv()
 
@@ -129,6 +130,7 @@ def convert_to_excel(df):
     worksheet.set_row(2, 30) 
     worksheet.set_column(0,7,15)
     worksheet.set_column(1,1,40)
+    worksheet.set_column(4,4,25)
     # puting it all together
     # Write the column headers with the defined format.
     for col_num, value in enumerate(df.columns.values):
@@ -140,14 +142,20 @@ def convert_to_excel(df):
     return output.getvalue()
 
 
-### TODO: Gesamt geht nicht, fehlende Spalten initialisieren
 @st.cache_data()
 def get_report(df):
+    
     df_grouped = df.groupby(["Campaign ID", "Campaign Name"]).value_counts(subset=["Status letzte Mailkampagne"], normalize=False).reset_index()
     status_df = df_grouped.pivot(columns="Status letzte Mailkampagne", index=["Campaign ID", "Campaign Name"], values=0)
+    # if some reactions did not appear, init columns manually
+    reaction_cols = ["Keine Reaktion", "Mail geöffnet", "Mail Links angeklickt", "Softbounce", "Hardbounce"]
+    status_df_cols = status_df.columns.values
+    for col in reaction_cols:
+        if col not in status_df_cols:
+            status_df.loc[:, col] = [0.0] * len(status_df)
     status_df.fillna(0, inplace=True)
-    status_df = status_df[["Keine Reaktion", "Mail geöffnet", "Mail Links angeklickt", "Softbounce", "Hardbounce"]]
-    status_df["Gesamt"] = status_df.apply(lambda x: len(df[df['Campaign ID'] == x.name]), axis=1)
+    status_df = status_df[reaction_cols]
+    status_df["Gesamt"] = status_df.apply(lambda x: np.sum(x), axis=1)
     status_df.reset_index(inplace=True)
     
     return status_df
@@ -241,7 +249,9 @@ configuration = connect_to_sib(sib_key)
 
 campaigns = get_campaigns(configuration,
                           configuration.api_key)
-campaigns["groups"] = [0 for _ in range(len(campaigns))]
+
+# TODO: integrate groups, ask users what they want
+campaigns["groups"] = [i for i in range(len(campaigns))]
 # builds a gridOptions dictionary using a GridOptionsBuilder instance.
 
 campaign_groups = tuple(i for i in range(len(campaigns)))
