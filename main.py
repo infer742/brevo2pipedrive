@@ -15,9 +15,9 @@ import numpy as np
 
 load_dotenv()
 
-st.set_page_config(layout="wide", page_title="Sendinblue Integration")
+st.set_page_config(layout="wide", page_title="Brevo Integration")
 
-st.title("Sendinblue Integration for Pipedrive")
+st.title("Brevo Integration for Pipedrive")
 
 
 @st.cache_data(show_spinner=False)
@@ -97,17 +97,22 @@ def convert_df(df):
     return df.to_csv().encode('utf-8')
 
 @st.cache_data(persist=True)
-def convert_to_excel(df):
+def generate_excel_file(df, report_df):
     # keep file in memory
     output = BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
     #
-    df.to_excel(writer, index=False, sheet_name='report', startrow=2)
+    
+    report_df.to_excel(writer, index=False, sheet_name='report', startrow=2)
 
+    df.to_excel(writer, index=False,sheet_name="data", startrow=1, header=False)
+    
     workbook = writer.book
     worksheet = writer.sheets['report']
+    data_sheet = writer.sheets['data']
     #Now we have the worksheet object. We can manipulate it 
     worksheet.set_zoom(90)
+    data_sheet.set_zoom(90)
     header_format = workbook.add_format({
             "valign": "vcenter",
             "align": "center",
@@ -128,14 +133,29 @@ def convert_to_excel(df):
     worksheet.merge_range('A1:AS1', title, format)
     worksheet.merge_range('A2:AS2', subheader)
     worksheet.set_row(2, 30) 
-    worksheet.set_column(0,7,15)
-    worksheet.set_column(1,1,40)
-    worksheet.set_column(4,4,25)
+    #worksheet.set_column(0,12,15)
+    worksheet.set_column(0,0,5)
+    worksheet.set_column(1,1,25)
+    worksheet.set_column(2,11,15)
+    worksheet.set_column(12,12,10)
+    
+    for i in range(len(report_df)):
+        worksheet.set_row(i+3, 20)
+    
+    data_sheet.set_row(0, 30) 
+    data_sheet.set_column(0,7,15)
+    data_sheet.set_column(1,1,20)
+    data_sheet.set_column(4,4,25)
+    data_sheet.set_column(7,7,40)
     # puting it all together
     # Write the column headers with the defined format.
-    for col_num, value in enumerate(df.columns.values):
+    for col_num, value in enumerate(report_df.columns.values):
         worksheet.write(2, col_num, value, header_format)
-        
+    
+    
+    # write data columns
+    for col_num, value in enumerate(df.columns.values):
+        data_sheet.write(0, col_num, value, header_format)    
     writer.close()
 
     # return excel file as binary string    
@@ -145,17 +165,34 @@ def convert_to_excel(df):
 @st.cache_data()
 def get_report(df):
     
-    df_grouped = df.groupby(["Campaign ID", "Campaign Name"]).value_counts(subset=["Status letzte Mailkampagne"], normalize=False).reset_index()
-    status_df = df_grouped.pivot(columns="Status letzte Mailkampagne", index=["Campaign ID", "Campaign Name"], values=0)
+    df_grouped = df.groupby(['Campaign ID', 'Campaign Name']).value_counts(subset=["Status letzte Mailkampagne"], normalize=False).reset_index()
+    df_blacklist = df.groupby(['Campaign ID', 'Campaign Name'])["Blacklist"].apply(lambda x: (x == "Ja").sum()).reset_index(name='Blacklist')
+    status_df = df_grouped.pivot(columns=["Status letzte Mailkampagne"], index=["Campaign ID", "Campaign Name"], values=0)
     # if some reactions did not appear, init columns manually
-    reaction_cols = ["Keine Reaktion", "Mail geöffnet", "Mail Links angeklickt", "Softbounce", "Hardbounce"]
-    status_df_cols = status_df.columns.values
+    reaction_cols = ["Keine Reaktion", "geöffnet", "geklickt", "Softbounce", "Hardbounce"]
+    col_map = {
+        'Mail geöffnet': 'geöffnet',
+        'Mail Links angeklickt' : 'geklickt',
+    }
+    status_df = status_df.join(df_blacklist.set_index(['Campaign ID', 'Campaign Name']), on=['Campaign ID', 'Campaign Name'])
+
+    status_df.index.set_names(["ID", "Name"], inplace=True)
+    status_df = status_df.rename(columns=col_map)
+    reaction_cols_full = []
     for col in reaction_cols:
+        reaction_cols_full.append(col)
+        reaction_cols_full.append("% \n" + col)
+    status_df_cols = status_df.columns.values
+    
+    for col in reaction_cols_full:
         if col not in status_df_cols:
             status_df.loc[:, col] = [0.0] * len(status_df)
+    
     status_df.fillna(0, inplace=True)
-    status_df = status_df[reaction_cols]
+    status_df = status_df[reaction_cols_full + ["Blacklist"]]
     status_df["Gesamt"] = status_df.apply(lambda x: np.sum(x), axis=1)
+    for col in reaction_cols:
+        status_df["% \n" + col] = status_df[col] / status_df["Gesamt"]
     status_df.reset_index(inplace=True)
     
     return status_df
@@ -234,8 +271,13 @@ with st.sidebar:
     drop_contacts = st.checkbox("Drop contacts not in pipedrive", value=False)
     drop_own_domain = st.checkbox("Drop contacts with own company domain", value= True)
     if drop_own_domain:
-        own_domain = st.text_input("Company domain", value="company.com")
-    
+        if "COMPANY_DOMAIN" in os.environ:
+            domain = os.environ["COMPANY_DOMAIN"]
+        else:
+            domain = "company.com"
+        
+        own_domain = st.text_input("Company domain", value=domain)
+
     has_custom_name = st.checkbox("Custom name field?")
     if has_custom_name:
         custom_name = st.text_input("Custom name field")
@@ -318,7 +360,7 @@ if "df" in st.session_state.keys():
     csv = convert_df(st.session_state['df'])
     # get report and export to excel
     report_df = get_report(edited_result_df)
-    excel_report = convert_to_excel(report_df)
+    excel_report = generate_excel_file(edited_result_df, report_df)
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
